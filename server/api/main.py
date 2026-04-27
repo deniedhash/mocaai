@@ -54,7 +54,7 @@ logger = logging.getLogger("moca.main")
 # Application State
 # ---------------------------------------------------------------------------
 
-_state: dict = {"brain": None, "graph": None, "ready": False}
+_state: dict = {"brain": None, "graph": None, "ready": False, "services": None}
 
 
 @asynccontextmanager
@@ -92,12 +92,30 @@ async def lifespan(app: FastAPI):
         logger.warning("   Server will start but LLM calls may fail until config is corrected.")
         _state["ready"] = False
 
+    # Phase 4 — Core Services Layer
+    try:
+        from services.registry import MOCAServiceRegistry
+        registry = MOCAServiceRegistry()
+        await registry.start_all()
+        _state["services"] = registry
+        app.state.services = registry
+        logger.info("✅ MOCA service registry online")
+    except Exception as e:
+        logger.warning("⚠️  Service registry startup failed (non-fatal): %s", e)
+        _state["services"] = None
+
     yield
 
     logger.info("🛑 MOCA shutting down.")
+    if _state.get("services"):
+        try:
+            await _state["services"].stop_all()
+        except Exception as e:
+            logger.warning("Service registry shutdown error: %s", e)
     _state["brain"] = None
     _state["graph"] = None
     _state["ready"] = False
+    _state["services"] = None
 
 
 # ---------------------------------------------------------------------------

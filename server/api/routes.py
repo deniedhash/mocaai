@@ -86,6 +86,11 @@ class AgentStatus(BaseModel):
     status: str
 
 
+class ServiceStatus(BaseModel):
+    name: str
+    status: str
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str
@@ -93,6 +98,7 @@ class HealthResponse(BaseModel):
     brain_model: str
     brain_ready: bool
     agents: list[AgentStatus]
+    services: list[ServiceStatus]
     redis_status: str
     postgres_status: str
     total_interactions: int
@@ -196,13 +202,20 @@ async def health():
         for name, domain in _AGENT_DOMAINS.items()
     ]
 
+    registry = state.get("services")
+    service_statuses = (
+        [ServiceStatus(name=s["name"], status=s["status"]) for s in registry.status()]
+        if registry else []
+    )
+
     return HealthResponse(
         status="operational" if state["ready"] else "degraded",
-        version="3.0.0",
+        version="4.0.0",
         brain_provider=os.getenv("BRAIN_PROVIDER", "cerebras"),
         brain_model=os.getenv("BRAIN_MODEL", "unknown"),
         brain_ready=state["ready"],
         agents=agents,
+        services=service_statuses,
         redis_status=redis_status,
         postgres_status=pg_status,
         total_interactions=total,

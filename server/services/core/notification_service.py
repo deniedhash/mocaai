@@ -1,35 +1,72 @@
-"""
-MOCA Notification Service — Phase 1 stub.
+import logging
+import uuid
+from datetime import datetime
 
-Phase 2 will implement:
-- Push notifications (FCM, APNs)
-- In-app toast notifications via WebSocket
-- Email notification dispatch
-- Slack/Discord webhooks
-"""
+from sqlalchemy import text
 
-from typing import Optional
+from ._db import _get_engine, _run_sync
+
+logger = logging.getLogger("moca.services.notification")
 
 
-async def notify(
-    session_id: str,
-    message: str,
-    channel: str = "websocket",
-    metadata: Optional[dict] = None,
-) -> bool:
-    """
-    Dispatch a notification to the user.
+class MOCANotificationService:
+    async def notify(
+        self,
+        message: str,
+        priority: str,
+        session_id: str,
+        devices: str = "best",
+        context: dict = None,
+    ) -> dict:
+        notification_id = str(uuid.uuid4())
+        logger.info(
+            "Notification | id=%s priority=%s session=%s msg=%r",
+            notification_id, priority, session_id, message[:80],
+        )
 
-    Args:
-        session_id: Target session/device identifier.
-        message: Notification content.
-        channel: Delivery channel ('websocket', 'push', 'email').
-        metadata: Optional channel-specific metadata.
+        def _insert():
+            with _get_engine().connect() as conn:
+                conn.execute(text("""
+                    INSERT INTO notifications
+                        (id, message, priority, session_id, devices, status)
+                    VALUES
+                        (:id, :msg, :priority, :sid, :devices, 'pending')
+                """), {"id": notification_id, "msg": message, "priority": priority,
+                       "sid": session_id, "devices": devices})
+                conn.commit()
 
-    Returns:
-        True if dispatched successfully, False otherwise.
+        await _run_sync(_insert)
+        return {"notification_id": notification_id, "status": "pending", "priority": priority}
 
-    Phase 1: no-op stub, always returns True.
-    """
-    print(f"[NotificationService] [{channel}] → {session_id}: {message[:60]}")
-    return True
+    async def get_pending(self, session_id: str) -> list:
+        def _query():
+            with _get_engine().connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT id, message, priority, devices, created_at
+                    FROM notifications
+                    WHERE session_id = :sid AND status = 'pending'
+                    ORDER BY created_at ASC
+                """), {"sid": session_id}).fetchall()
+                result = []
+                for r in rows:
+                    row = dict(r._mapping)
+                    for k, v in row.items():
+                        if isinstance(v, datetime):
+                            row[k] = v.isoformat()
+                    result.append(row)
+                return result
+
+        return await _run_sync(_query)
+
+    async def mark_delivered(self, notification_id: str) -> bool:
+        def _update():
+            with _get_engine().connect() as conn:
+                result = conn.execute(text("""
+                    UPDATE notifications
+                    SET status = 'delivered', delivered_at = NOW()
+                    WHERE id = :id AND status = 'pending'
+                """), {"id": notification_id})
+                conn.commit()
+                return result.rowcount > 0
+
+        return await _run_sync(_update)
