@@ -4,7 +4,7 @@ the agent system. Single source of truth for structured data contracts.
 """
 
 import operator
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 from typing_extensions import NotRequired, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -90,3 +90,5 @@ class MOCAState(TypedDict):
     # touch these fields can safely return partial dicts without crashing LangGraph)
     relevant_memories: NotRequired[list[dict]]   # semantic search hits from past sessions
     extracted_facts: NotRequired[list[dict]]     # recently extracted knowledge
+    # Phase 5 — context engine snapshot for this request
+    current_context: NotRequired[Optional[Any]]  # MOCAContext dataclass instance

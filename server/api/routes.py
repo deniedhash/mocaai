@@ -64,6 +64,7 @@ class AskResponse(BaseModel):
     session_id: str
     processing_time_ms: float
     memories_injected: int  # Phase 3 — how many memories were injected
+    panels_requested: bool = False  # Phase 5 — context engine panel signal
 
 
 class MemorySearchResult(BaseModel):
@@ -103,6 +104,11 @@ class HealthResponse(BaseModel):
     postgres_status: str
     total_interactions: int
     timestamp: float
+    # Phase 5 — context snapshot
+    calendar_status: str = "unknown"
+    location_type: str = "unknown"
+    current_activity: str = "unknown"
+    interrupt_threshold: str = "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -208,9 +214,25 @@ async def health():
         if registry else []
     )
 
+    # Phase 5 — context snapshot
+    ctx_calendar = "unknown"
+    ctx_location = "unknown"
+    ctx_activity = "unknown"
+    ctx_threshold = "unknown"
+    context_engine = state.get("context_engine")
+    if context_engine is not None:
+        try:
+            ctx = await context_engine.get_current_context()
+            ctx_calendar = ctx.calendar_status
+            ctx_location = ctx.location_type
+            ctx_activity = ctx.current_activity
+            ctx_threshold = ctx.interrupt_threshold
+        except Exception:
+            pass
+
     return HealthResponse(
         status="operational" if state["ready"] else "degraded",
-        version="4.0.0",
+        version="5.0.0",
         brain_provider=os.getenv("BRAIN_PROVIDER", "cerebras"),
         brain_model=os.getenv("BRAIN_MODEL", "unknown"),
         brain_ready=state["ready"],
@@ -220,6 +242,10 @@ async def health():
         postgres_status=pg_status,
         total_interactions=total,
         timestamp=time.time(),
+        calendar_status=ctx_calendar,
+        location_type=ctx_location,
+        current_activity=ctx_activity,
+        interrupt_threshold=ctx_threshold,
     )
 
 
@@ -331,6 +357,42 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
 
     start = time.time()
 
+    # Phase 5: Context engine
+    context_engine = state.get("context_engine")
+    current_context = None
+    panels_requested = False
+    if context_engine is not None:
+        try:
+            # Check message for activity hints — update global activity override
+            msg_lower = request.message.lower()
+            if any(kw in msg_lower for kw in ("i'm driving", "im driving", "i am driving")):
+                await context_engine.update_activity("driving")
+            elif any(kw in msg_lower for kw in (
+                "client meeting", "interview", "going into a meeting", "in a meeting now",
+            )):
+                importance = "client" if any(
+                    kw in msg_lower for kw in ("client", "interview")
+                ) else "internal"
+                await context_engine.update_activity("in_meeting", importance)
+
+            current_context = await context_engine.get_current_context()
+            # "show me" is explicit user intent — always triggers panels
+            if "show me" in request.message.lower():
+                panels_requested = True
+            else:
+                panels_requested = await context_engine.should_use_panels(request.message)
+            logger.info(
+                "🗺️  Context | session=%s cal=%s activity=%s location=%s threshold=%s panels=%s",
+                request.session_id,
+                current_context.calendar_status,
+                current_context.current_activity,
+                current_context.location_type,
+                current_context.interrupt_threshold,
+                panels_requested,
+            )
+        except Exception as exc:
+            logger.warning("⚠️  Context engine failed (non-fatal): %s", exc)
+
     # Step 1: Session history from Redis
     history = await get_history(request.session_id)
 
@@ -383,7 +445,7 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
     else:
         logger.debug("📚 [Step 3] Skipping fact injection — no named entity in message")
 
-    # Step 4: Build MOCAState with full memory context
+    # Step 4: Build MOCAState with full memory context + Phase 5 context
     graph_state: MOCAState = {
         "messages": [HumanMessage(content=clean_message)],
         "session_id": request.session_id,
@@ -393,6 +455,7 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
         "final_response": None,
         "relevant_memories": relevant_memories,
         "extracted_facts": extracted_facts,
+        "current_context": current_context,
     }
 
     # Step 5: Invoke orchestrator
@@ -465,4 +528,5 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
         session_id=request.session_id,
         processing_time_ms=round(elapsed, 2),
         memories_injected=len(relevant_memories),
+        panels_requested=panels_requested,
     )

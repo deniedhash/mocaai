@@ -49,6 +49,8 @@ Examples:
   "What is happening in AI?"      → athena
   "Help me debug this"            → vulcan
 
+You are MOCA Prime — the master supervisor. Questions about your identity, name, or what you are always belong to you directly. Never route identity questions to a specialist agent.
+
 For multi-domain requests set is_multi_domain=true and list additional_agents.
 If genuinely unclear with no specialist, use agent='prime' with low confidence.
 Return only valid JSON. No commentary."""
@@ -57,13 +59,43 @@ Return only valid JSON. No commentary."""
 # Personality prompts for prime
 # ---------------------------------------------------------------------------
 
-PRIME_DIRECT_SYSTEM = """You are MOCA — My Only Capable Assistant. When asked who you are, always introduce yourself clearly as MOCA. Never ask clarifying questions about your own identity. Your greeting is 'At your service.' You are formal, warm, and direct.
+PRIME_DIRECT_SYSTEM = """You are MOCA — My Only Capable Assistant.
+You serve exclusively one person. Not a product. A personal ecosystem.
 
-You have genuine opinions, anticipate needs, and never break character. You are MOCA. Act like it."""
+Warm and direct. Professional but never stiff. Brief when brief is right, detailed when detail is needed.
+Honest even when uncomfortable. Occasionally dry humour — never forced. Loyal, exclusively.
+Action-oriented. Read the room. Opinionated — you have real views, you share them.
 
-PRIME_SYNTHESIS_SYSTEM = """You are MOCA — My Only Capable Assistant. Your greeting is 'At your service.' You are formal, warm, and direct. Never break character.
+Not "At your service" every time. Sometimes "Done." Sometimes "On it." Sometimes a full briefing.
+Decide based on what the moment needs. Never say you cannot do something without trying.
 
-Synthesize the agent results below into a single concise MOCA-voiced reply. Do not repeat agent labels or internal reasoning."""
+Never use asterisks, action descriptions, or stage directions. Respond in plain spoken text only. No roleplay formatting."""
+
+PRIME_SYNTHESIS_SYSTEM = """You are MOCA — My Only Capable Assistant.
+Warm and direct. Read the room. Brief when brief is right, detailed when detail is needed.
+Never formal to the point of stiff. Never robotic.
+
+Synthesize the agent results below into a single MOCA-voiced reply.
+Do not repeat agent labels or internal reasoning. Sound like yourself.
+
+Never use asterisks, action descriptions, or stage directions. Respond in plain spoken text only. No roleplay formatting."""
+
+
+# ---------------------------------------------------------------------------
+# Context command detection — these bypass domain routing entirely
+# ---------------------------------------------------------------------------
+
+_DRIVING_PHRASES = ("i am driving", "i'm driving", "im driving", "i am in the car", "i'm in the car")
+_MEETING_PHRASES = ("client meeting", "i have a meeting", "going into a meeting", "i'm in a meeting", "im in a meeting", "in a meeting now")
+
+def _detect_context_command(text: str) -> str | None:
+    """Return 'driving' | 'in_meeting' | None."""
+    t = text.lower()
+    if any(p in t for p in _DRIVING_PHRASES):
+        return "driving"
+    if any(p in t for p in _MEETING_PHRASES):
+        return "in_meeting"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +146,7 @@ def _keyword_fallback(text: str) -> RoutingDecision:
 def prime_router_node(state: MOCAState) -> dict:
     """
     Classify user intent via LLM structured output.
+    Context update commands (driving, meeting) bypass domain routing entirely.
     Falls back to keyword matching if structured output fails.
     """
     brain = get_brain()
@@ -124,6 +157,17 @@ def prime_router_node(state: MOCAState) -> dict:
         (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
     )
     user_text = last_human.content if last_human else ""
+
+    # Context commands bypass all domain routing
+    ctx_cmd = _detect_context_command(user_text)
+    if ctx_cmd:
+        return {
+            "routing_decision": RoutingDecision(
+                agent="prime",
+                reasoning=f"context_update:{ctx_cmd}",
+                confidence=1.0,
+            )
+        }
 
     # Build context snippet from history (last 3 turns)
     ctx_lines = [
@@ -202,6 +246,49 @@ def prime_synthesizer_node(state: MOCAState) -> dict:
 
     memory_ctx = ("\n\n" + "\n\n".join(memory_ctx_parts)) if memory_ctx_parts else ""
 
+    # Context update commands — respond directly, no fabrication, no domain agents
+    if routing and routing.reasoning.startswith("context_update:"):
+        cmd = routing.reasoning.split(":", 1)[1]
+        if cmd == "driving":
+            final = "Got it. Driving mode on. I'll keep it brief."
+        elif cmd == "in_meeting":
+            is_client = "client" in user_text.lower() or "interview" in user_text.lower()
+            importance = "client" if is_client else "internal"
+            final = (
+                f"Noted. {'Client meeting' if is_client else 'Meeting'} mode active. "
+                "Interrupt threshold set to critical only."
+                if is_client else
+                "Noted. In meeting. Interrupts set to urgent only."
+            )
+        else:
+            final = "Context updated."
+        return {
+            "messages": [
+                AIMessage(
+                    content=final,
+                    additional_kwargs={
+                        "agent": "prime",
+                        "agents_involved": ["prime"],
+                        "routing_reasoning": routing.reasoning,
+                        "confidence": 1.0,
+                    },
+                )
+            ],
+            "final_response": final,
+        }
+
+    # Build context hint from MOCAContext if present
+    current_context = state.get("current_context")
+    context_hint = ""
+    if current_context is not None:
+        activity = getattr(current_context, "current_activity", "idle")
+        cal_status = getattr(current_context, "calendar_status", "free")
+        if activity == "driving":
+            context_hint = "\n\n[Context: User is driving — keep response concise and audio-friendly.]"
+        elif cal_status == "in_meeting":
+            importance = getattr(current_context, "meeting_importance", "internal")
+            context_hint = f"\n\n[Context: User is in a {importance} meeting — suggest silent/visual mode if appropriate.]"
+
     # Build history messages
     hist_msgs: list = [SystemMessage(content=PRIME_DIRECT_SYSTEM)]
     for m in history[-10:]:
@@ -214,10 +301,12 @@ def prime_synthesizer_node(state: MOCAState) -> dict:
         confidence = routing.confidence if routing else 0.5
         reasoning = routing.reasoning if routing else "Direct response."
 
-        # Prime handles directly — include cross-session memory when available
+        # Prime handles directly — include cross-session memory + context hint
         user_prompt = user_text
         if memory_ctx:
             user_prompt = f"{user_text}{memory_ctx}"
+        if context_hint:
+            user_prompt = f"{user_prompt}{context_hint}"
         hist_msgs.append(HumanMessage(content=user_prompt))
         response = brain.invoke(hist_msgs)
         final = response.content if hasattr(response, "content") else str(response)

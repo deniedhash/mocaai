@@ -54,7 +54,7 @@ logger = logging.getLogger("moca.main")
 # Application State
 # ---------------------------------------------------------------------------
 
-_state: dict = {"brain": None, "graph": None, "ready": False, "services": None}
+_state: dict = {"brain": None, "graph": None, "ready": False, "services": None, "context_engine": None}
 
 
 @asynccontextmanager
@@ -104,6 +104,17 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️  Service registry startup failed (non-fatal): %s", e)
         _state["services"] = None
 
+    # Phase 5 — Context Engine
+    try:
+        from core.context_engine import MOCAContextEngine
+        context_engine = MOCAContextEngine()
+        _state["context_engine"] = context_engine
+        app.state.context_engine = context_engine
+        logger.info("✅ MOCA context engine online")
+    except Exception as e:
+        logger.warning("⚠️  Context engine startup failed (non-fatal): %s", e)
+        _state["context_engine"] = None
+
     yield
 
     logger.info("🛑 MOCA shutting down.")
@@ -116,6 +127,7 @@ async def lifespan(app: FastAPI):
     _state["graph"] = None
     _state["ready"] = False
     _state["services"] = None
+    _state["context_engine"] = None
 
 
 # ---------------------------------------------------------------------------
