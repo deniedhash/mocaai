@@ -86,15 +86,12 @@ Never use asterisks, action descriptions, or stage directions. Respond in plain 
 # ---------------------------------------------------------------------------
 
 _DRIVING_PHRASES = ("i am driving", "i'm driving", "im driving", "i am in the car", "i'm in the car")
-_MEETING_PHRASES = ("client meeting", "i have a meeting", "going into a meeting", "i'm in a meeting", "im in a meeting", "in a meeting now")
 
 def _detect_context_command(text: str) -> str | None:
-    """Return 'driving' | 'in_meeting' | None."""
+    """Return 'driving' | None."""
     t = text.lower()
     if any(p in t for p in _DRIVING_PHRASES):
         return "driving"
-    if any(p in t for p in _MEETING_PHRASES):
-        return "in_meeting"
     return None
 
 
@@ -246,20 +243,10 @@ def prime_synthesizer_node(state: MOCAState) -> dict:
 
     memory_ctx = ("\n\n" + "\n\n".join(memory_ctx_parts)) if memory_ctx_parts else ""
 
-    # Context update commands — respond directly, no fabrication, no domain agents
     if routing and routing.reasoning.startswith("context_update:"):
         cmd = routing.reasoning.split(":", 1)[1]
         if cmd == "driving":
             final = "Got it. Driving mode on. I'll keep it brief."
-        elif cmd == "in_meeting":
-            is_client = "client" in user_text.lower() or "interview" in user_text.lower()
-            importance = "client" if is_client else "internal"
-            final = (
-                f"Noted. {'Client meeting' if is_client else 'Meeting'} mode active. "
-                "Interrupt threshold set to critical only."
-                if is_client else
-                "Noted. In meeting. Interrupts set to urgent only."
-            )
         else:
             final = "Context updated."
         return {

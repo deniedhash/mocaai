@@ -8,15 +8,16 @@ interface ChatWindowProps {
   messages: Message[];
   status: ConnectionStatus;
   onSend: (content: string) => void;
+  isTyping: boolean;
 }
 
-export function ChatWindow({ messages, status, onSend }: ChatWindowProps) {
+export function ChatWindow({ messages, status, onSend, isTyping }: ChatWindowProps) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isTyping]);
 
   const handleKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && input.trim()) {
@@ -36,6 +37,13 @@ export function ChatWindow({ messages, status, onSend }: ChatWindowProps) {
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} />
         ))}
+        {isTyping && (
+          <div className="bubble-wrapper bubble-wrapper--moca">
+            <div className="bubble bubble--moca typing-indicator">
+              <span /><span /><span />
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 

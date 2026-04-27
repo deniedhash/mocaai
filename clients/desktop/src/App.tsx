@@ -17,8 +17,10 @@ const MAX_MESSAGES = 50;
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [orbState, setOrbState] = useState<OrbState>("idle");
+  const [isTyping, setIsTyping] = useState(false);
 
   const handleMocaMessage = useCallback((data: MocaResponse) => {
+    setIsTyping(false);
     setMessages((prev) => {
       const next = [
         ...prev,
@@ -32,7 +34,7 @@ export default function App() {
       ];
       return next.slice(-MAX_MESSAGES);
     });
-  }, []);
+  }, []); 
 
   const { send, status } = useWebSocket(handleMocaMessage, setOrbState);
 
@@ -49,13 +51,14 @@ export default function App() {
       ];
       return next.slice(-MAX_MESSAGES);
     });
+    setIsTyping(true);
     send(content);
   }, [send]);
 
   return (
     <div className="app">
       <Orb state={orbState} />
-      <ChatWindow messages={messages} status={status} onSend={handleSend} />
+      <ChatWindow messages={messages} status={status} onSend={handleSend} isTyping={isTyping} />
     </div>
   );
 }

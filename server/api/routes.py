@@ -75,6 +75,18 @@ class MemorySearchResult(BaseModel):
     created_at: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Meeting status — structured output from lightweight post-graph LLM call
+# ---------------------------------------------------------------------------
+
+from typing import Literal
+
+class MeetingStatusDecision(BaseModel):
+    """Structured meeting-status inference produced by a lightweight LLM call."""
+    status: Literal["starting_now", "starting_soon", "cancelled", "no_change"] = "no_change"
+    minutes_until: Optional[int] = None  # only meaningful for 'starting_soon'
+
+
 class MemorySearchResponse(BaseModel):
     query: str
     total: int
@@ -188,6 +200,49 @@ async def _background_extract(
         )
     except Exception as exc:
         logger.warning("Background knowledge extraction error: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Lightweight structured LLM call — infer meeting status from conversation
+# ---------------------------------------------------------------------------
+
+_MEETING_STATUS_SYSTEM = """You are a context classifier. Given a short conversation excerpt, \
+determine the user's current meeting status.
+
+Rules:
+- "starting_now": user says they are entering / in / about to start a meeting RIGHT NOW ("going into my meeting", "just started", "meeting now").
+- "starting_soon": user mentions a meeting in the near future with a time offset ("in 10 mins", "at 3pm", "later today").
+- "cancelled": user says the meeting was cancelled or they are leaving/finished.
+- "no_change": nothing meeting-related, or the statement is too ambiguous.
+
+For "starting_soon" set minutes_until to your best integer estimate (null otherwise).
+Return ONLY valid JSON matching the schema. No commentary."""
+
+
+async def _infer_meeting_status(
+    user_message: str,
+    moca_response: str,
+) -> MeetingStatusDecision:
+    """Call the brain with structured output to classify meeting status."""
+    from core.brain import get_brain
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    brain = get_brain()
+    prompt = (
+        f"User: {user_message}\n"
+        f"Assistant: {moca_response}\n\n"
+        "Classify the user's meeting status based on the conversation above."
+    )
+    try:
+        structured = brain.with_structured_output(MeetingStatusDecision)
+        result: MeetingStatusDecision = structured.invoke([
+            SystemMessage(content=_MEETING_STATUS_SYSTEM),
+            HumanMessage(content=prompt),
+        ])
+        return result
+    except Exception as exc:
+        logger.debug("Meeting status inference failed (non-fatal): %s", exc)
+        return MeetingStatusDecision(status="no_change")
 
 
 # ---------------------------------------------------------------------------
@@ -367,13 +422,6 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
             msg_lower = request.message.lower()
             if any(kw in msg_lower for kw in ("i'm driving", "im driving", "i am driving")):
                 await context_engine.update_activity("driving")
-            elif any(kw in msg_lower for kw in (
-                "client meeting", "interview", "going into a meeting", "in a meeting now",
-            )):
-                importance = "client" if any(
-                    kw in msg_lower for kw in ("client", "interview")
-                ) else "internal"
-                await context_engine.update_activity("in_meeting", importance)
 
             current_context = await context_engine.get_current_context()
             # "show me" is explicit user intent — always triggers panels
@@ -489,6 +537,22 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
         "💬 [Step 5 done] | session=%s agent=%s confidence=%.2f | response=%r",
         request.session_id, agent, confidence, content[:80],
     )
+
+    # Phase 5: Infer meeting status via structured LLM call — no text parsing
+    if context_engine is not None:
+        try:
+            meeting_decision = await _infer_meeting_status(clean_message, content)
+            logger.info(
+                "📅 Meeting status | session=%s status=%s minutes_until=%s",
+                request.session_id, meeting_decision.status, meeting_decision.minutes_until,
+            )
+            if meeting_decision.status == "starting_now":
+                is_client = "client" in request.message.lower() or "interview" in request.message.lower()
+                await context_engine.update_activity("in_meeting", "client" if is_client else "internal")
+            elif meeting_decision.status == "cancelled":
+                await context_engine.update_activity("idle")
+        except Exception as exc:
+            logger.debug("Meeting status update skipped (non-fatal): %s", exc)
 
     # Step 6: Persist to Redis + PostgreSQL
     await add_message(request.session_id, "user", request.message)
