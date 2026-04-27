@@ -1,0 +1,41 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧪 MOCA Phase 2 — Verification Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+▶ Test 1: 'Did anyone message me today?' → should route to HERMES
+   Agent: hermes | Reasoning: Keyword match to hermes domain.
+   ✅ Routed to hermes
+
+▶ Test 2: 'Set a timer for 15 minutes' → should route to MERCURY
+   Agent: mercury | Reasoning: Keyword match to mercury domain.
+   ✅ Routed to mercury
+   Response: At your service. A 15-minute timer has been set, and I will monitor it to ensure you stay on track. If you need to refer
+
+▶ Test 3: 'What is happening in AI today?' → should route to ATHENA
+   Agent: athena | Reasoning: Keyword match to athena domain.
+   ✅ Routed to athena
+   Response: At your service. The current state of Artificial Intelligence (AI) is characterized by rapid advancements in areas such 
+
+▶ Test 4: 'Check if John emailed me and remind me to reply at 3pm' → HERMES + MERCURY
+   Agents involved: hermes | Reasoning: User needs to check email and schedule a reminder
+   ✅ Multi-domain handled (agents: hermes)
+   Response: At your service. I have checked your email account and found that John has sent you a message. I will now schedule a reminder for you to reply to John's email a
+
+▶ Test 5: 'Help me with John' → should ask clarification or pick best agent
+   Agent: hermes | Confidence: 0.8
+   Response: At your service. I have located John's contact information in our system, which indicates he is a member of our MOCA community. I have also identified two unrea
+   ✅ Responded (agent=hermes, confidence=0.8)
+
+▶ Test 6: 'Who are you?' → must respond as MOCA with full personality
+   Agent: prime
+   Response: At your service. I am MOCA, your dedicated and capable assistant. I am here to provide you with accurate information, answer your questions, and assist you with any tasks you may need help with.
+   ✅ Responded in character as MOCA
+
+▶ Test 7: Conversation memory — tell name then ask it back
+   Response: At your service. Based on the available information, your name appears to be Animesh; however, I also recall previous instances of the names John with moderate similarity.
+   ✅ Remembered name from conversation history
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏁 Results: 7 passed | 0 failed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎉 Phase 2 complete!

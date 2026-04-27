@@ -32,6 +32,7 @@ if [[ "$AGENT" == "hermes" ]]; then pass "Routed to hermes"; else fail "Expected
 
 # ── Test 2: Single domain — MERCURY ────────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 2: 'Set a timer for 15 minutes' → should route to MERCURY"
 R=$(ask "Set a timer for 15 minutes" "p2-t2")
 AGENT=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('agent','?'))" 2>/dev/null)
@@ -42,6 +43,7 @@ echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print('   Respo
 
 # ── Test 3: Research domain — ATHENA ───────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 3: 'What is happening in AI today?' → should route to ATHENA"
 R=$(ask "What is happening in AI today?" "p2-t3")
 AGENT=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('agent','?'))" 2>/dev/null)
@@ -52,6 +54,7 @@ echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print('   Respo
 
 # ── Test 4: Multi-domain — HERMES + MERCURY ────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 4: 'Check if John emailed me and remind me to reply at 3pm' → HERMES + MERCURY"
 R=$(ask "Check if John emailed me and remind me to reply at 3pm" "p2-t4")
 AGENTS=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d.get('agents_involved',[])))" 2>/dev/null)
@@ -64,6 +67,7 @@ echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print('   Respo
 
 # ── Test 5: Ambiguous — 'Help me with John' ────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 5: 'Help me with John' → should ask clarification or pick best agent"
 R=$(ask "Help me with John" "p2-t5")
 AGENT=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('agent','?'))" 2>/dev/null)
@@ -76,6 +80,7 @@ echo "   Response: $RESP"
 
 # ── Test 6: Personality — 'Who are you?' ───────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 6: 'Who are you?' → must respond as MOCA with full personality"
 R=$(ask "Who are you?" "p2-t6")
 AGENT=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('agent','?'))" 2>/dev/null)
@@ -87,10 +92,11 @@ echo "   Response: ${RESP:0:200}"
 
 # ── Test 7: Conversation memory ─────────────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 7: Conversation memory — tell name then ask it back"
 SESSION="p2-mem-$(date +%s)"
 ask "My name is Animesh" "$SESSION" > /dev/null
-sleep 1
+sleep 5
 R=$(ask "What is my name?" "$SESSION")
 RESP=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('response',''))" 2>/dev/null)
 echo "   Response: ${RESP:0:200}"

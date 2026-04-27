@@ -61,6 +61,7 @@ fi
 
 # ── Test 2: Semantic preference recall ──────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 2: Semantic preference recall"
 SESSION_C="p3-t2-a-$(date +%s)"
 SESSION_D="p3-t2-b-$(date +%s)"
@@ -88,6 +89,7 @@ fi
 
 # ── Test 3: Entity extraction & search ──────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 3: Entity extraction & /moca/memory/search"
 SESSION_E="p3-t3-$(date +%s)"
 
@@ -119,6 +121,7 @@ fi
 
 # ── Test 4: Knowledge accumulation ──────────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 4: Knowledge accumulation (5 facts → synthesis)"
 SESSION_F="p3-t4-$(date +%s)"
 
@@ -163,6 +166,7 @@ fi
 
 # ── Test 5: Relevance ranking ────────────────────────────────────────────────
 echo ""
+sleep 5
 echo "▶ Test 5: Relevance ranking (10 memories → only relevant injected)"
 echo "   Check server logs for 'Memory injection' lines to verify count."
 
