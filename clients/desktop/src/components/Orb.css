@@ -1,0 +1,67 @@
+.orb-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px 0 8px;
+}
+
+.orb {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orb-inner {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #1a1a2e;
+}
+
+/* idle: subtle pulse */
+.orb--idle {
+  background: radial-gradient(circle, #2a2a5e, #16213e);
+  animation: orb-pulse 3s ease-in-out infinite;
+}
+
+/* thinking: rotating gradient */
+.orb--thinking {
+  background: conic-gradient(from 0deg, #6c63ff, #00d2ff, #6c63ff);
+  animation: orb-spin 1s linear infinite;
+}
+
+/* responding: wave */
+.orb--responding {
+  background: radial-gradient(circle, #00d2ff, #6c63ff);
+  animation: orb-wave 0.6s ease-in-out infinite alternate;
+}
+
+/* error: red pulse */
+.orb--error {
+  background: radial-gradient(circle, #ff4444, #cc0000);
+  animation: orb-error-pulse 1s ease-in-out infinite;
+}
+
+@keyframes orb-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.05); }
+}
+
+@keyframes orb-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orb-wave {
+  from { transform: scale(0.92); }
+  to { transform: scale(1.08); }
+}
+
+@keyframes orb-error-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.96); }
+}

@@ -1,0 +1,46 @@
+.bubble-wrapper {
+  display: flex;
+  margin: 4px 12px;
+}
+
+.bubble-wrapper--user {
+  justify-content: flex-end;
+}
+
+.bubble-wrapper--moca {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 75%;
+  padding: 8px 12px;
+  border-radius: 12px;
+}
+
+.bubble--user {
+  background: #0f3460;
+  border-bottom-right-radius: 2px;
+}
+
+.bubble--moca {
+  background: #16213e;
+  border-bottom-left-radius: 2px;
+}
+
+.bubble-content {
+  margin: 0;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble-agent {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}

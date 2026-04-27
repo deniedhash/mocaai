@@ -112,7 +112,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 # Run through orchestrator
                 try:
-                    graph_state = {"messages": [HumanMessage(content=user_text)]}
+                    graph_state = {
+                        "messages": [HumanMessage(content=user_text)],
+                        "session_id": client_session,
+                        "routing_decision": None,
+                        "agent_responses": [],
+                        "conversation_history": [],
+                        "final_response": None,
+                    }
                     result = state["graph"].invoke(graph_state)
 
                     messages = result.get("messages", [])
