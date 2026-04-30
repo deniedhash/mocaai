@@ -3,13 +3,18 @@ Mercury — Automation & Time Agent.
 Domain: timers, alarms, reminders, habit automation.
 """
 
+import json
+import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from core.brain import get_brain
 from core.schemas import AgentResponse, MOCAState
+
+logger = logging.getLogger("moca.mercury")
 
 DOMAIN = "automation and time management"
 
@@ -28,7 +33,7 @@ When setting timers or alarms: confirm crisply and move on. No ceremony."""
 
 
 # ---------------------------------------------------------------------------
-# Intent detection
+# Intent detection (pre-response: set actions only)
 # ---------------------------------------------------------------------------
 
 def _detect_intent(text: str) -> str:
@@ -39,10 +44,6 @@ def _detect_intent(text: str) -> str:
         return "set_alarm"
     if re.search(r'\b(remind|reminder)\b', t):
         return "set_reminder"
-    if re.search(r'\b(what|list|show|any)\b.{0,30}\b(timer|alarm|reminder)s?\b', t):
-        return "list_timers"
-    if re.search(r'\b(cancel|stop|delete)\b.{0,20}\b(timer|alarm|reminder)\b', t):
-        return "cancel_timer"
     if re.search(r'\b(meeting|appointment|call|standup|interview|lunch|dinner)\b', t):
         return "add_event"
     return "general"
@@ -98,7 +99,7 @@ def _get_services():
 
 
 # ---------------------------------------------------------------------------
-# Node
+# Pre-response: execute service action for set operations
 # ---------------------------------------------------------------------------
 
 async def _execute_service_action(intent: str, user_text: str, session_id: str) -> str | None:
@@ -147,23 +148,113 @@ async def _execute_service_action(intent: str, user_text: str, session_id: str) 
             )
             return f"[event_id={result['event_id']} start_time={result['start_time']}]"
 
-    elif intent == "list_timers":
-        timers = await services.clock.get_active_timers()
-        if not timers:
-            return "[active_timers=none]"
-        summary = "; ".join(
-            f"{t['type']} '{t.get('label','')}' fires_at={t['fire_at']}"
-            for t in timers
-        )
-        return f"[active_timers={len(timers)}: {summary}]"
-
     return None
 
+
+# ---------------------------------------------------------------------------
+# Post-response: LLM intent classification + DB query
+# ---------------------------------------------------------------------------
+
+async def _classify_timer_intent(user_text: str, brain) -> dict:
+    """Fast brain classifies timer-related intent from user message."""
+    prompt = (
+        f'Classify the intent of this user message. Return ONLY valid JSON, no explanation.\n\n'
+        f'User message: "{user_text}"\n\n'
+        'Return JSON:\n'
+        '{\n'
+        '  "intent": "check_timers" | "set_timer" | "cancel_timer" | "other",\n'
+        '  "timer_id": "<id string or null>"\n'
+        '}\n\n'
+        '- check_timers: user wants to know about existing/active timers\n'
+        '- set_timer: user wants to create a new timer\n'
+        '- cancel_timer: user wants to cancel/stop/delete a timer\n'
+        '- other: unrelated to timer status'
+    )
+    try:
+        logger.debug("⏱️ [mercury] classify_start | %s", datetime.now().isoformat())
+        _t0 = time.monotonic()
+        response = brain.invoke([HumanMessage(content=prompt)])
+        elapsed = int((time.monotonic() - _t0) * 1000)
+        logger.debug("⏱️ [mercury] classify_done | elapsed=%dms", elapsed)
+        content = response.content if hasattr(response, "content") else str(response)
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(content[start:end])
+    except Exception:
+        pass
+    return {"intent": "other", "timer_id": None}
+
+
+def _format_remaining(fire_at_str: str) -> str:
+    now = datetime.now(timezone.utc)
+    try:
+        fire_at = datetime.fromisoformat(fire_at_str)
+        if fire_at.tzinfo is None:
+            fire_at = fire_at.replace(tzinfo=timezone.utc)
+        total_secs = max(0, int((fire_at - now).total_seconds()))
+        mins, secs = divmod(total_secs, 60)
+        return f"{mins} minute{'s' if mins != 1 else ''} {secs} second{'s' if secs != 1 else ''} remaining"
+    except Exception:
+        return f"fires at {fire_at_str}"
+
+
+def _format_timers_response(timers: list) -> str:
+    if not timers:
+        return "No active timers."
+    count = len(timers)
+    lines = [f"You have {count} active timer{'s' if count > 1 else ''}:"]
+    for t in timers:
+        label = t.get("label") or t.get("type", "Timer")
+        lines.append(f"- {label} — {_format_remaining(t.get('fire_at', ''))}")
+    return "\n".join(lines)
+
+
+async def _handle_post_response(user_text: str, brain, session_id: str) -> str | None:
+    """Classify timer intent via fast brain and query DB. Returns override response or None."""
+    classification = await _classify_timer_intent(user_text, brain)
+    intent = classification.get("intent", "other")
+
+    if intent not in ("check_timers", "cancel_timer"):
+        return None
+
+    services = _get_services()
+    if services is None:
+        return None
+
+    if intent == "check_timers":
+        timers = await services.clock.get_active_timers()
+        return _format_timers_response(timers)
+
+    # cancel_timer
+    timers = await services.clock.get_active_timers()
+    if not timers:
+        return "No active timers to cancel."
+
+    if len(timers) == 1:
+        t = timers[0]
+        cancelled = await services.clock.cancel_timer(str(t["id"]))
+        label = t.get("label") or "Timer"
+        return f"Cancelled: {label}." if cancelled else "Could not cancel the timer."
+
+    # Multiple timers — list and ask
+    lines = ["Which timer would you like to cancel?"]
+    for t in timers:
+        label = t.get("label") or t.get("type", "Timer")
+        lines.append(f"- {label} — {_format_remaining(t.get('fire_at', ''))}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
 
 def node(state: MOCAState) -> dict:
     import asyncio
 
-    brain = get_brain()
+    _moca_brain = state.get("brain")
+    brain = _moca_brain.get_agent_brain() if _moca_brain else get_brain()
+    fast_brain = _moca_brain.get_fast_brain() if _moca_brain else brain
     messages = state.get("messages", [])
     history = state.get("conversation_history", [])
     routing = state.get("routing_decision")
@@ -175,22 +266,16 @@ def node(state: MOCAState) -> dict:
     user_text = last_human.content if last_human else ""
     task_context = routing.reasoning if routing else "Handle the automation/timer request."
 
-    # Execute service action if applicable
+    # Pre-response: execute set operations only
     intent = _detect_intent(user_text)
     service_result = None
     if intent != "general":
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                future = asyncio.run_coroutine_threadsafe(
-                    _execute_service_action(intent, user_text, session_id), loop
-                )
-                service_result = future.result(timeout=10)
-            else:
-                service_result = loop.run_until_complete(
-                    _execute_service_action(intent, user_text, session_id)
-                )
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                service_result = ex.submit(
+                    asyncio.run, _execute_service_action(intent, user_text, session_id)
+                ).result(timeout=30)
         except Exception:
             pass
 
@@ -204,8 +289,31 @@ def node(state: MOCAState) -> dict:
         hist_msgs.append(cls(content=m["content"]))
     hist_msgs.append(HumanMessage(content=f"Task: {augmented_text}\nContext: {task_context}"))
 
+    logger.debug("⏱️ [mercury] agent_llm_start | %s", datetime.now().isoformat())
+    _t_agent = time.monotonic()
     response = brain.invoke(hist_msgs)
+    elapsed_agent = int((time.monotonic() - _t_agent) * 1000)
+    logger.debug("⏱️ [mercury] agent_llm_done | elapsed=%dms", elapsed_agent)
     content = response.content if hasattr(response, "content") else str(response)
+
+    # Post-response: only needed for check/cancel — regex already handles set actions
+    override = None
+    if intent == "general":
+        try:
+            import concurrent.futures
+            logger.debug("⏱️ [mercury] post_response_start | %s", datetime.now().isoformat())
+            _t_post = time.monotonic()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                override = ex.submit(
+                    asyncio.run, _handle_post_response(user_text, fast_brain, session_id)
+                ).result(timeout=30)
+            elapsed_post = int((time.monotonic() - _t_post) * 1000)
+            logger.debug("⏱️ [mercury] post_response_done | elapsed=%dms", elapsed_post)
+        except Exception:
+            pass
+
+    if override is not None:
+        content = override
 
     ar = AgentResponse(
         agent_name="mercury",

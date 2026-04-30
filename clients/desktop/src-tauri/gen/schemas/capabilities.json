@@ -1,1 +1,1 @@
-{}
+{"main-capability":{"identifier":"main-capability","description":"MOCA overlay window capability","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-hide","core:window:allow-set-focus"]}}

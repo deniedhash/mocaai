@@ -92,3 +92,5 @@ class MOCAState(TypedDict):
     extracted_facts: NotRequired[list[dict]]     # recently extracted knowledge
     # Phase 5 — context engine snapshot for this request
     current_context: NotRequired[Optional[Any]]  # MOCAContext dataclass instance
+    # Phase 6b — dual brain: MOCABrain instance injected by routes, read by agents
+    brain: NotRequired[Optional[Any]]

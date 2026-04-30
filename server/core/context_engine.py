@@ -206,9 +206,10 @@ class MOCAContextEngine:
         return "voice"
 
     async def should_use_panels(
-        self, query: str, content_type: str = "general"
+        self, query: str, content_type: str = "general", ctx: "MOCAContext | None" = None
     ) -> bool:
-        ctx = await self.get_current_context()
+        if ctx is None:
+            ctx = await self.get_current_context()
         if ctx.current_activity == "driving":
             return False
         if ctx.calendar_status == "in_meeting":

@@ -14,10 +14,17 @@ interface ChatWindowProps {
 export function ChatWindow({ messages, status, onSend, isTyping }: ChatWindowProps) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    const handleWindowFocus = () => inputRef.current?.focus();
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, []);
 
   const handleKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && input.trim()) {
@@ -49,6 +56,7 @@ export function ChatWindow({ messages, status, onSend, isTyping }: ChatWindowPro
 
       <div className="chat-input-row">
         <input
+          ref={inputRef}
           className="chat-input"
           type="text"
           placeholder="Ask MOCA anything..."

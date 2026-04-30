@@ -12,6 +12,7 @@ Lifespan:
   - Graceful shutdown cleanup
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -57,22 +58,91 @@ logger = logging.getLogger("moca.main")
 _state: dict = {"brain": None, "graph": None, "ready": False, "services": None, "context_engine": None}
 
 
+async def _brain_health_loop(brain) -> None:
+    while True:
+        await asyncio.sleep(60)
+        await brain.run_health_checks()
+        parts = []
+        if brain.fast_brain:
+            parts.append(f"fast={brain.fast_healthy}")
+        if brain.smart_brain:
+            parts.append(f"smart={brain.smart_healthy}")
+        logger.info("Brain health | %s", " ".join(parts))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle manager."""
     logger.info("⚡ MOCA is waking up... (log_level=%s)", _LOG_LEVEL)
 
+    health_task = None
     try:
-        from core.brain import get_brain
+        from core.brain import MOCABrain
         from core.orchestrator import build_graph
 
-        _state["brain"] = get_brain()
-        logger.info("✅ Brain loaded | provider=%s model=%s",
-                    os.getenv("BRAIN_PROVIDER", "cerebras"),
-                    os.getenv("BRAIN_MODEL", "unknown"))
+        brain = MOCABrain()
+
+        _PLACEHOLDER = ("your_key_here",)
+
+        def _valid_key(env: str) -> str:
+            v = os.getenv(env, "").strip()
+            return v if v and v not in _PLACEHOLDER else ""
+
+        fast_key = _valid_key("FAST_BRAIN_API_KEY")
+        smart_key = _valid_key("SMART_BRAIN_API_KEY")
+        legacy_key = _valid_key("BRAIN_API_KEY")
+
+        if fast_key and smart_key:
+            brain.initialize(
+                fast_provider=os.getenv("FAST_BRAIN_PROVIDER", "cerebras"),
+                fast_model=os.getenv("FAST_BRAIN_MODEL", "llama3.1-8b"),
+                fast_api_key=fast_key,
+                fast_base_url=os.getenv("FAST_BRAIN_BASE_URL", "https://api.cerebras.ai/v1"),
+                smart_provider=os.getenv("SMART_BRAIN_PROVIDER", "nvidia_nim"),
+                smart_model=os.getenv("SMART_BRAIN_MODEL", "meta/llama-3.3-70b-instruct"),
+                smart_api_key=smart_key,
+                smart_base_url=os.getenv("SMART_BRAIN_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+            )
+            logger.info("⚡ Dual-brain mode | fast=%s smart=%s",
+                        os.getenv("FAST_BRAIN_MODEL"), os.getenv("SMART_BRAIN_MODEL"))
+        elif fast_key:
+            brain.initialize(
+                fast_provider=os.getenv("FAST_BRAIN_PROVIDER", "cerebras"),
+                fast_model=os.getenv("FAST_BRAIN_MODEL", "llama3.1-8b"),
+                fast_api_key=fast_key,
+                fast_base_url=os.getenv("FAST_BRAIN_BASE_URL", "https://api.cerebras.ai/v1"),
+            )
+            logger.info("⚡ Single brain mode — fast only | model=%s", os.getenv("FAST_BRAIN_MODEL"))
+        elif smart_key:
+            brain.initialize(
+                smart_provider=os.getenv("SMART_BRAIN_PROVIDER", "nvidia_nim"),
+                smart_model=os.getenv("SMART_BRAIN_MODEL", "meta/llama-3.3-70b-instruct"),
+                smart_api_key=smart_key,
+                smart_base_url=os.getenv("SMART_BRAIN_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+            )
+            logger.info("⚡ Single brain mode — smart only | model=%s", os.getenv("SMART_BRAIN_MODEL"))
+        elif legacy_key:
+            model = os.getenv("BRAIN_MODEL", "llama3.1-8b")
+            base_url = os.getenv("BRAIN_BASE_URL", "https://api.cerebras.ai/v1")
+            provider = os.getenv("BRAIN_PROVIDER", "cerebras")
+            brain.initialize(
+                fast_provider=provider, fast_model=model,
+                fast_api_key=legacy_key, fast_base_url=base_url,
+            )
+            logger.info("⚡ Legacy single brain mode | provider=%s model=%s", provider, model)
+        else:
+            raise ValueError(
+                "No brain API key configured. "
+                "Set FAST_BRAIN_API_KEY + SMART_BRAIN_API_KEY (dual), "
+                "one of them (single), or BRAIN_API_KEY (legacy)."
+            )
+
+        _state["brain"] = brain
 
         _state["graph"] = build_graph()
         logger.info("✅ LangGraph orchestrator compiled")
+
+        health_task = asyncio.create_task(_brain_health_loop(brain))
 
         # Pre-warm embedding model + DB engine so first request is fast
         try:
@@ -118,6 +188,8 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("🛑 MOCA shutting down.")
+    if health_task is not None:
+        health_task.cancel()
     if _state.get("services"):
         try:
             await _state["services"].stop_all()

@@ -7,14 +7,23 @@ use tauri::{
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
 
+#[tauri::command]
+fn hide_window(window: tauri::WebviewWindow) {
+    let _ = window.hide();
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![hide_window])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Accessory);
 
             let main_window = app.get_webview_window("main").unwrap();
             main_window.hide().unwrap();
+
+            #[cfg(target_os = "macos")]
+            configure_macos_window(&main_window);
 
             let open_item = MenuItem::with_id(app, "open", "Open MOCA", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -58,11 +67,15 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                window.hide().unwrap();
+        .on_window_event(|window, event| match event {
+            WindowEvent::Focused(false) => {
+                let _ = window.hide();
             }
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error running MOCA");
@@ -92,4 +105,29 @@ fn position_window(win: tauri::WebviewWindow, click_pos: PhysicalPosition<f64>) 
 
     let _ = win.show();
     let _ = win.set_focus();
+}
+
+/// Set macOS-specific window behaviors:
+/// - Stationary: excluded from Mission Control and Exposé
+/// - CanJoinAllSpaces: visible on all virtual desktops
+/// - Level: floating (above normal windows, below system UI)
+#[cfg(target_os = "macos")]
+fn configure_macos_window(window: &tauri::WebviewWindow) {
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_win = match window.ns_window() {
+        Ok(ptr) => ptr as *mut objc::runtime::Object,
+        Err(_) => return,
+    };
+
+    unsafe {
+        // NSWindowCollectionBehaviorCanJoinAllSpaces = 1 << 0
+        // NSWindowCollectionBehaviorStationary      = 1 << 4
+        // Combined: 0b10001 = 17
+        let behavior: u64 = (1 << 0) | (1 << 4);
+        let _: () = msg_send![ns_win, setCollectionBehavior: behavior];
+
+        // NSFloatingWindowLevel = 3
+        let _: () = msg_send![ns_win, setLevel: 3_i64];
+    }
 }

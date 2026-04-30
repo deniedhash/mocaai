@@ -146,7 +146,8 @@ def prime_router_node(state: MOCAState) -> dict:
     Context update commands (driving, meeting) bypass domain routing entirely.
     Falls back to keyword matching if structured output fails.
     """
-    brain = get_brain()
+    _moca_brain = state.get("brain")
+    brain = _moca_brain.get_router_brain() if _moca_brain else get_brain()
     messages = state.get("messages", [])
     history = state.get("conversation_history", [])
 
@@ -165,6 +166,11 @@ def prime_router_node(state: MOCAState) -> dict:
                 confidence=1.0,
             )
         }
+
+    # Keyword-first: skip LLM for unambiguous single-domain matches
+    kw_routing = _keyword_fallback(user_text)
+    if kw_routing.agent != "prime" and not history:
+        return {"routing_decision": kw_routing}
 
     # Build context snippet from history (last 3 turns)
     ctx_lines = [
@@ -198,7 +204,7 @@ def prime_router_node(state: MOCAState) -> dict:
             a for a in routing.additional_agents if a in VALID_AGENTS
         ]
     except Exception:
-        routing = _keyword_fallback(user_text)
+        routing = kw_routing
 
     return {"routing_decision": routing}
 
@@ -212,11 +218,12 @@ def prime_synthesizer_node(state: MOCAState) -> dict:
     Synthesize agent results into a single MOCA-voiced final response.
     If no agent ran, responds directly as MOCA.
     """
-    brain = get_brain()
+    _moca_brain = state.get("brain")
     messages = state.get("messages", [])
     history = state.get("conversation_history", [])
     agent_responses: list[AgentResponse] = state.get("agent_responses", [])
     routing: RoutingDecision | None = state.get("routing_decision")
+    # brain selection deferred until we know if agents ran
 
     last_human = next(
         (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
@@ -288,7 +295,9 @@ def prime_synthesizer_node(state: MOCAState) -> dict:
         confidence = routing.confidence if routing else 0.5
         reasoning = routing.reasoning if routing else "Direct response."
 
-        # Prime handles directly — include cross-session memory + context hint
+        # Direct response — use agent (smart) brain for complex reasoning
+        brain = _moca_brain.get_agent_brain() if _moca_brain else get_brain()
+
         user_prompt = user_text
         if memory_ctx:
             user_prompt = f"{user_text}{memory_ctx}"
@@ -299,7 +308,9 @@ def prime_synthesizer_node(state: MOCAState) -> dict:
         final = response.content if hasattr(response, "content") else str(response)
         agents_involved = ["prime"]
     else:
-        # Synthesize agent results
+        # Synthesis — use fast brain (summarizing agent results is lightweight)
+        brain = _moca_brain.get_fast_brain() if _moca_brain else get_brain()
+
         agent_context = "\n\n".join(
             f"[{ar.agent_name.upper()} — {ar.domain}]:\n{ar.response}"
             for ar in agent_responses

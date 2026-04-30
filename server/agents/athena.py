@@ -37,7 +37,8 @@ def synthesize(sources: list) -> dict:
 
 
 def node(state: MOCAState) -> dict:
-    brain = get_brain()
+    _moca_brain = state.get("brain")
+    brain = _moca_brain.get_agent_brain() if _moca_brain else get_brain()
     messages = state.get("messages", [])
     history = state.get("conversation_history", [])
     routing = state.get("routing_decision")

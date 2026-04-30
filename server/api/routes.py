@@ -121,6 +121,8 @@ class HealthResponse(BaseModel):
     location_type: str = "unknown"
     current_activity: str = "unknown"
     interrupt_threshold: str = "unknown"
+    # Phase 6b — dual brain status
+    brain: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -222,12 +224,16 @@ Return ONLY valid JSON matching the schema. No commentary."""
 async def _infer_meeting_status(
     user_message: str,
     moca_response: str,
+    brain_instance=None,
 ) -> MeetingStatusDecision:
-    """Call the brain with structured output to classify meeting status."""
-    from core.brain import get_brain
+    """Call the fast brain with structured output to classify meeting status."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    brain = get_brain()
+    if brain_instance is not None:
+        brain = brain_instance.get_fast_brain()
+    else:
+        from core.brain import get_brain
+        brain = get_brain()
     prompt = (
         f"User: {user_message}\n"
         f"Assistant: {moca_response}\n\n"
@@ -285,9 +291,12 @@ async def health():
         except Exception:
             pass
 
+    brain_obj = state.get("brain")
+    brain_status = brain_obj.get_status() if brain_obj and hasattr(brain_obj, "get_status") else None
+
     return HealthResponse(
         status="operational" if state["ready"] else "degraded",
-        version="5.0.0",
+        version="6.2.0",
         brain_provider=os.getenv("BRAIN_PROVIDER", "cerebras"),
         brain_model=os.getenv("BRAIN_MODEL", "unknown"),
         brain_ready=state["ready"],
@@ -301,6 +310,7 @@ async def health():
         location_type=ctx_location,
         current_activity=ctx_activity,
         interrupt_threshold=ctx_threshold,
+        brain=brain_status,
     )
 
 
@@ -428,7 +438,7 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
             if "show me" in request.message.lower():
                 panels_requested = True
             else:
-                panels_requested = await context_engine.should_use_panels(request.message)
+                panels_requested = await context_engine.should_use_panels(request.message, ctx=current_context)
             logger.info(
                 "🗺️  Context | session=%s cal=%s activity=%s location=%s threshold=%s panels=%s",
                 request.session_id,
@@ -504,6 +514,7 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
         "relevant_memories": relevant_memories,
         "extracted_facts": extracted_facts,
         "current_context": current_context,
+        "brain": state.get("brain"),
     }
 
     # Step 5: Invoke orchestrator
@@ -538,10 +549,13 @@ async def ask(request: AskRequest, background_tasks: BackgroundTasks):
         request.session_id, agent, confidence, content[:80],
     )
 
-    # Phase 5: Infer meeting status via structured LLM call — no text parsing
-    if context_engine is not None:
+    # Phase 5: Infer meeting status — only call LLM when message has meeting signals
+    _MEETING_SIGNALS = {"meeting", "standup", "stand-up", "call", "interview",
+                        "appointment", "going into", "just started", "cancelled", "cancel"}
+    _has_meeting_signal = any(kw in clean_message.lower() for kw in _MEETING_SIGNALS)
+    if context_engine is not None and _has_meeting_signal:
         try:
-            meeting_decision = await _infer_meeting_status(clean_message, content)
+            meeting_decision = await _infer_meeting_status(clean_message, content, brain_instance=state.get("brain"))
             logger.info(
                 "📅 Meeting status | session=%s status=%s minutes_until=%s",
                 request.session_id, meeting_decision.status, meeting_decision.minutes_until,

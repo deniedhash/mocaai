@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Orb } from "./components/Orb";
 import { ChatWindow } from "./components/ChatWindow";
 import { useWebSocket, OrbState, MocaResponse } from "./hooks/useWebSocket";
@@ -37,6 +38,16 @@ export default function App() {
   }, []); 
 
   const { send, status } = useWebSocket(handleMocaMessage, setOrbState);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        invoke("hide_window").catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const handleSend = useCallback((content: string) => {
     setMessages((prev) => {
